@@ -159,7 +159,7 @@ namespace _cr
 	}
 
 	__forceinline bool main_loop_file(aes256_t& aes, std::ifstream& in, std::ofstream& out, std::array<uint8_t, 16>& iv) noexcept
-{
+	{
 	constexpr std::size_t FILE_CHUNK = 16 * 1024 * 1024;
 
 	std::vector<uint8_t> inbuf(FILE_CHUNK);
@@ -174,23 +174,23 @@ namespace _cr
 
 		const std::size_t n = static_cast<std::size_t>(got);
 
-		_x::main_loop(aes, iv, inbuf.data(), outbuf.data(), n);
+		main_loop(aes, iv, inbuf.data(), outbuf.data(), n);
 
 		out.write(reinterpret_cast<const char*>(outbuf.data()), static_cast<std::streamsize>(n));
 		if (!out)
 			return false;
 
 		uint64_t lo = 0, hi = 0;
-		_x::fmemcpy(&lo, iv.data(), 8);
-		_x::fmemcpy(&hi, iv.data() + 8, 8);
+		fmemcpy(&lo, iv.data(), 8);
+		fmemcpy(&hi, iv.data() + 8, 8);
 
 		const uint64_t new_lo = lo + (n / 16);
 		if (new_lo < lo)
 			++hi;
 		lo = new_lo;
 
-		_x::fmemcpy(iv.data(), &lo, 8);
-		_x::fmemcpy(iv.data() + 8, &hi, 8);
+		fmemcpy(iv.data(), &lo, 8);
+		fmemcpy(iv.data() + 8, &hi, 8);
 
 		if (in.eof())
 			break;
@@ -270,15 +270,15 @@ bool encrypt_file(const std::wstring& ipath, const std::wstring& opath, const st
 	aes256_t aes(key.data());
 
 	std::array<uint8_t, 16> iv{};
-	const uint64_t r1 = support::rdrand64();
-	const uint64_t r2 = support::rdrand64();
+	const uint64_t r1 = _cr::rdrand64();
+	const uint64_t r2 = _cr::rdrand64();
 	_x::fmemcpy(iv.data(), &r1, 8);
 	_x::fmemcpy(iv.data() + 8, &r2, 8);
 
 	out.write(reinterpret_cast<const char*>(iv.data()), 16);
 	if (!out) return false;
 
-	return _x::main_loop_file(aes, in, out, iv);
+	return _cr::main_loop_file(aes, in, out, iv);
 }
 
 bool decrypt_file(const std::wstring& ipath, const std::wstring& opath, const std::array<uint8_t, 32>& key) noexcept
@@ -300,7 +300,7 @@ bool decrypt_file(const std::wstring& ipath, const std::wstring& opath, const st
 	if (in.gcount() != 16)
 		return false;
 
-	return _x::main_loop_file(aes, in, out, iv);
+	return _cr::main_loop_file(aes, in, out, iv);
 }
 
 static std::vector<uint8_t> b64_enc(const std::vector<uint8_t>& input) noexcept
@@ -417,3 +417,4 @@ static inline std::array<uint8_t, 64> sha512_bytes(const std::string& input) noe
 	return hash;
 
 }
+
