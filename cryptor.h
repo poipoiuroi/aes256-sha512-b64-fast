@@ -158,42 +158,49 @@ namespace _cr
 			_mm_sfence();
 	}
 
-	__forceinline static bool main_loop_file(aes256_t& aes, std::ifstream& in, std::ofstream& out, std::array<uint8_t, 16>& iv) noexcept
+	__forceinline bool main_loop_file(aes256_t& aes, std::ifstream& in, std::ofstream& out, std::array<uint8_t, 16>& iv) noexcept
+{
+	constexpr std::size_t FILE_CHUNK = 16 * 1024 * 1024;
+
+	std::vector<uint8_t> inbuf(FILE_CHUNK);
+	std::vector<uint8_t> outbuf(FILE_CHUNK);
+
+	while (true)
 	{
-		constexpr size_t FILE_CHUNK = 8 * 1024 * 1024;
+		in.read(reinterpret_cast<char*>(inbuf.data()), static_cast<std::streamsize>(FILE_CHUNK));
+		const std::streamsize got = in.gcount();
+		if (got <= 0)
+			break;
 
-		std::vector<uint8_t> inbuf(FILE_CHUNK);
-		std::vector<uint8_t> outbuf(FILE_CHUNK);
+		const std::size_t n = static_cast<std::size_t>(got);
 
-		while (true)
-		{
-			in.read(reinterpret_cast<char*>(inbuf.data()), FILE_CHUNK);
-			std::streamsize got = in.gcount();
-			if (got <= 0) break;
+		_x::main_loop(aes, iv, inbuf.data(), outbuf.data(), n);
 
-			const size_t n = static_cast<size_t>(got);
+		out.write(reinterpret_cast<const char*>(outbuf.data()), static_cast<std::streamsize>(n));
+		if (!out)
+			return false;
 
-			main_loop(aes, iv, inbuf.data(), outbuf.data(), n);
+		uint64_t lo = 0, hi = 0;
+		_x::fmemcpy(&lo, iv.data(), 8);
+		_x::fmemcpy(&hi, iv.data() + 8, 8);
 
-			out.write(reinterpret_cast<const char*>(outbuf.data()), n);
-			if (!out) return false;
+		const uint64_t new_lo = lo + (n / 16);
+		if (new_lo < lo)
+			++hi;
+		lo = new_lo;
 
-			uint64_t lo, hi;
-			_cr::fmemcpy(&lo, iv.data(), 8);
-			_cr::fmemcpy(&hi, iv.data() + 8, 8);
+		_x::fmemcpy(iv.data(), &lo, 8);
+		_x::fmemcpy(iv.data() + 8, &hi, 8);
 
-			uint64_t new_lo = lo + (n / 16);
-			if (new_lo < lo) ++hi;
-			lo = new_lo;
-
-			_cr::fmemcpy(iv.data(), &lo, 8);
-			_cr::fmemcpy(iv.data() + 8, &hi, 8);
-
-			if (in.eof()) break;
-		}
-
-		return true;
+		if (in.eof())
+			break;
 	}
+
+	SecureZeroMemory(inbuf.data(), inbuf.size());
+	SecureZeroMemory(outbuf.data(), outbuf.size());
+
+	return true;
+}
 
 #undef M1
 #undef M2
@@ -248,31 +255,43 @@ static bool decrypt_bin(const std::vector<uint8_t>& indata, const std::array<uin
 	return true;
 }
 
-static bool encrypt_file(const std::wstring& ipath, const std::wstring& opath, const std::array<uint8_t, 32>& key) noexcept
+bool encrypt_file(const std::wstring& ipath, const std::wstring& opath, const std::array<uint8_t, 32>& key) noexcept
 {
-	std::ifstream in(ipath, std::ios::binary);
-	std::ofstream out(opath, std::ios::binary | std::ios::trunc);
-	if (!in || !out)
+	std::ifstream in(ipath, std::ios::in | std::ios::binary);
+	std::ofstream out(opath, std::ios::out | std::ios::binary | std::ios::trunc);
+	if (!in.is_open() || !out.is_open())
 		return false;
+
+	in.sync_with_stdio(false);
+	in.tie(nullptr);
+	out.sync_with_stdio(false);
+	out.tie(nullptr);
 
 	aes256_t aes(key.data());
 
 	std::array<uint8_t, 16> iv{};
-	uint64_t r1 = _cr::rdrand64(), r2 = _cr::rdrand64();
-	_cr::fmemcpy(iv.data(), &r1, 8);
-	_cr::fmemcpy(iv.data() + 8, &r2, 8);
+	const uint64_t r1 = support::rdrand64();
+	const uint64_t r2 = support::rdrand64();
+	_x::fmemcpy(iv.data(), &r1, 8);
+	_x::fmemcpy(iv.data() + 8, &r2, 8);
+
 	out.write(reinterpret_cast<const char*>(iv.data()), 16);
 	if (!out) return false;
 
-	return _cr::main_loop_file(aes, in, out, iv);
+	return _x::main_loop_file(aes, in, out, iv);
 }
 
-static bool decrypt_file(const std::wstring& ipath, const std::wstring& opath, const std::array<uint8_t, 32>& key) noexcept
+bool decrypt_file(const std::wstring& ipath, const std::wstring& opath, const std::array<uint8_t, 32>& key) noexcept
 {
-	std::ifstream in(ipath, std::ios::binary);
-	std::ofstream out(opath, std::ios::binary | std::ios::trunc);
-	if (!in || !out)
+	std::ifstream in(ipath, std::ios::in | std::ios::binary);
+	std::ofstream out(opath, std::ios::out | std::ios::binary | std::ios::trunc);
+	if (!in.is_open() || !out.is_open())
 		return false;
+
+	in.sync_with_stdio(false);
+	in.tie(nullptr);
+	out.sync_with_stdio(false);
+	out.tie(nullptr);
 
 	aes256_t aes(key.data());
 
@@ -281,7 +300,7 @@ static bool decrypt_file(const std::wstring& ipath, const std::wstring& opath, c
 	if (in.gcount() != 16)
 		return false;
 
-	return _cr::main_loop_file(aes, in, out, iv);
+	return _x::main_loop_file(aes, in, out, iv);
 }
 
 static std::vector<uint8_t> b64_enc(const std::vector<uint8_t>& input) noexcept
@@ -396,4 +415,5 @@ static inline std::array<uint8_t, 64> sha512_bytes(const std::string& input) noe
 	std::array<uint8_t, 64> hash{};
 	ctx.finish(hash.data());
 	return hash;
+
 }
